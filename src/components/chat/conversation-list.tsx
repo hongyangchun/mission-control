@@ -135,6 +135,7 @@ export function ConversationList({ onNewConversation: _onNewConversation }: Conv
     markConversationRead,
   } = useMissionControl()
   const [search, setSearch] = useState('')
+  const [initialLoading, setInitialLoading] = useState(conversations.length === 0)
 
   // Context menu state
   const [ctxMenu, setCtxMenu] = useState<{ convId: string; x: number; y: number } | null>(null)
@@ -316,8 +317,10 @@ export function ConversationList({ onNewConversation: _onNewConversation }: Conv
       setConversations(
         providerSessions.sort((a: Conversation, b: Conversation) => b.updatedAt - a.updatedAt)
       )
+      setInitialLoading(false)
     } catch (err) {
       log.error('Failed to load conversations:', err)
+      setInitialLoading(false)
     }
   }, [setConversations])
 
@@ -489,7 +492,14 @@ export function ConversationList({ onNewConversation: _onNewConversation }: Conv
       <div className="flex-1 overflow-y-auto">
         {filteredConversations.length === 0 ? (
           <div className="p-4 text-center text-xs text-muted-foreground/50">
-            No conversations yet
+            {initialLoading ? (
+              <div className="flex items-center justify-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                <span>Loading sessions...</span>
+              </div>
+            ) : (
+              'No sessions found'
+            )}
           </div>
         ) : (
           <>
