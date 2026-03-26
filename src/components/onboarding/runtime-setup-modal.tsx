@@ -364,16 +364,18 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
           </div>
 
           {providerType === 'openai_oauth' ? (
-            <div className="p-3 rounded-lg border border-border/20 bg-secondary/10 text-xs space-y-2">
+            <div className="p-3 rounded-lg border border-border/20 bg-secondary/10 text-xs space-y-3">
               <p className="font-medium text-foreground/80">OpenAI OAuth Login</p>
               <p className="text-muted-foreground">
-                Run this command in a terminal to authenticate via browser:
+                Run these commands in a terminal to authenticate via browser:
               </p>
-              <div className="bg-black/20 rounded p-2 font-mono text-[11px]">
-                <p><span className="text-muted-foreground/50">$</span> hermes model openai</p>
+              <div className="space-y-2">
+                <CopyableCommand command="hermes model openai" label="Set OpenAI as provider" />
+                <CopyableCommand command="hermes setup" label="Or run full interactive setup" />
               </div>
               <p className="text-muted-foreground/50 text-[10px]">
                 This opens a browser window for OAuth login. No API key needed.
+                After authenticating, Hermes will save the credentials automatically.
               </p>
             </div>
           ) : (
@@ -518,33 +520,10 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
           <div className="p-3 rounded-lg border border-border/20 bg-secondary/10 text-xs space-y-2.5">
             <p className="font-medium text-foreground/80">Set up messaging channels:</p>
 
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="w-5 text-center text-muted-foreground/50">1</span>
-                <div>
-                  <p className="text-foreground/80">Configure a platform</p>
-                  <div className="bg-black/20 rounded p-1.5 font-mono text-[11px] mt-1">
-                    <p><span className="text-muted-foreground/50">$</span> hermes gateway setup</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="w-5 text-center text-muted-foreground/50">2</span>
-                <div>
-                  <p className="text-foreground/80">Start the gateway</p>
-                  <div className="bg-black/20 rounded p-1.5 font-mono text-[11px] mt-1">
-                    <p><span className="text-muted-foreground/50">$</span> hermes gateway start</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="w-5 text-center text-muted-foreground/50">3</span>
-                <div>
-                  <p className="text-foreground/80">Send a message to your bot to test</p>
-                </div>
-              </div>
+            <div className="space-y-2.5">
+              <CopyableCommand command="hermes gateway setup" label="1. Configure a platform" />
+              <CopyableCommand command="hermes gateway start" label="2. Start the gateway" />
+              <p className="text-muted-foreground/70 pl-1">3. Send a message to your bot to test</p>
             </div>
 
             <div className="mt-2 pt-2 border-t border-border/10">
@@ -575,18 +554,12 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
             </p>
           </div>
 
-          <div className="p-3 rounded-lg border border-border/20 bg-secondary/10 text-xs space-y-2">
-            <p className="font-medium text-foreground/80">What's next?</p>
-            <div className="space-y-1.5 text-muted-foreground">
-              <p>Start chatting with Hermes from the terminal:</p>
-              <div className="bg-black/20 rounded p-2 font-mono text-[11px]">
-                <p><span className="text-muted-foreground/50">$</span> hermes</p>
-              </div>
-              <p className="mt-2">Or set up messaging platforms:</p>
-              <div className="bg-black/20 rounded p-2 font-mono text-[11px]">
-                <p><span className="text-muted-foreground/50">$</span> hermes gateway setup</p>
-              </div>
-            </div>
+          <div className="p-3 rounded-lg border border-border/20 bg-secondary/10 text-xs space-y-3">
+            <p className="font-medium text-foreground/80">Quick commands:</p>
+            <CopyableCommand command="hermes" label="Start chatting" />
+            <CopyableCommand command="hermes setup" label="Full interactive setup" />
+            <CopyableCommand command="hermes gateway setup" label="Set up messaging channels" />
+            <CopyableCommand command="hermes gateway start" label="Start the gateway" />
           </div>
 
           <div className="flex justify-end">
@@ -595,6 +568,32 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
         </div>
       )}
 
+    </div>
+  )
+}
+
+function CopyableCommand({ command, label }: { command: string; label: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 bg-black/20 rounded px-2.5 py-1.5 font-mono text-[11px] flex items-center justify-between gap-2">
+        <div>
+          <span className="text-muted-foreground/50">$ </span>
+          <span className="text-foreground/80">{command}</span>
+        </div>
+        <button
+          type="button"
+          onClick={async () => {
+            await navigator.clipboard.writeText(command)
+            setCopied(true)
+            setTimeout(() => setCopied(false), 1500)
+          }}
+          className="text-[10px] px-1.5 py-0.5 rounded bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <span className="text-[10px] text-muted-foreground/50 w-32 shrink-0">{label}</span>
     </div>
   )
 }
