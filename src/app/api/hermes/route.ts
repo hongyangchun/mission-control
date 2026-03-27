@@ -47,6 +47,23 @@ export async function GET(request: NextRequest) {
   }
 }
 
+function stripAnsiAndControl(input: string): string {
+  return input
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\u009b[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
+}
+
+function extractDeviceAuth(output: string): { cleanOutput: string; deviceUrl: string | null; userCode: string | null } {
+  const cleanOutput = stripAnsiAndControl(output).replace(/\r/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+  const deviceUrl = cleanOutput.match(/https?:\/\/[^\s)]+/i)?.[0] || null
+  const userCode =
+    cleanOutput.match(/(?:code|user code|device code)\s*[:=]\s*([A-Z0-9-]{4,})/i)?.[1]
+    || cleanOutput.match(/\b[A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+\b/)?.[0]
+    || null
+  return { cleanOutput, deviceUrl, userCode }
+}
+
 export async function POST(request: NextRequest) {
   const auth = requireRole(request, 'admin')
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
@@ -122,7 +139,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'run-oauth-model') {
-      const { model } = body
+      const { model, provider, authMethod } = body
       const hermesBin = join(HERMES_HOME, 'hermes-agent', 'venv', 'bin', 'hermes')
       const bin = existsSync(hermesBin) ? hermesBin : 'hermes'
       const HOME_DIR = existsSync(join(dataDir, '.hermes')) ? dataDir : homeDir
@@ -135,8 +152,15 @@ export async function POST(request: NextRequest) {
       try {
         const { runCommand } = require('@/lib/command')
 
-        // Ensure OpenAI is selected before invoking OAuth device code flow.
-        await runCommand(bin, ['config', 'set', 'model.provider', 'openai-codex'], {
+        const requestedProvider = typeof provider === 'string' && provider.trim() ? provider.trim() : 'openai-codex'
+        const providerForOAuth = requestedProvider === 'openai' ? 'openai-codex' : requestedProvider
+        const requestedAuthMethod = typeof authMethod === 'string' ? authMethod.trim().toLowerCase() : 'device_code'
+        if (requestedAuthMethod !== 'device_code') {
+          return NextResponse.json({ success: false, error: `Unsupported OAuth auth method: ${requestedAuthMethod}` }, { status: 400 })
+        }
+
+        // Ensure provider/model are preselected before invoking device-code auth.
+        await runCommand(bin, ['config', 'set', 'model.provider', providerForOAuth], {
           timeoutMs: 15_000,
           env: {
             ...baseEnv,
@@ -196,16 +220,24 @@ export async function POST(request: NextRequest) {
           })
         })
 
+        const parsed = extractDeviceAuth(oauthResult.output)
+        const success = oauthResult.code === 0
+
         return NextResponse.json({
-          success: oauthResult.code === 0,
-          output: oauthResult.output,
+          success,
+          output: parsed.cleanOutput || (success ? 'Authentication complete.' : ''),
           code: oauthResult.code,
+          deviceUrl: parsed.deviceUrl,
+          userCode: parsed.userCode,
         })
       } catch (err: any) {
+        const parsed = extractDeviceAuth((err?.stdout || '') + '\n' + (err?.stderr || ''))
         return NextResponse.json({
           success: false,
           error: err?.message || 'OAuth command failed',
-          output: (err?.stdout || '') + '\n' + (err?.stderr || ''),
+          output: parsed.cleanOutput,
+          deviceUrl: parsed.deviceUrl,
+          userCode: parsed.userCode,
         })
       }
     }

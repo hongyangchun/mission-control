@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 
 interface RuntimeSetupModalProps {
@@ -205,11 +205,50 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
   const [error, setError] = useState<string | null>(null)
   const [hermesStatus, setHermesStatus] = useState<any>(null)
   const [providerKey, setProviderKey] = useState('')
-  const [providerType, setProviderType] = useState<'anthropic' | 'openai' | 'openai_oauth' | 'openrouter' | 'nous' | 'google' | 'xai'>('anthropic')
+  const [providerType, setProviderType] = useState<'anthropic' | 'openai' | 'openrouter' | 'nous' | 'google' | 'xai'>('anthropic')
   const [selectedModel, setSelectedModel] = useState('claude-sonnet-4-6')
   const [customModel, setCustomModel] = useState('')
+  const [authMethod, setAuthMethod] = useState<'api_key' | 'device_code'>('api_key')
+  const [oauthBusy, setOauthBusy] = useState(false)
+  const [oauthOutput, setOauthOutput] = useState<string | null>(null)
+  const [oauthError, setOauthError] = useState<string | null>(null)
+  const [oauthUrl, setOauthUrl] = useState<string | null>(null)
+  const [oauthCode, setOauthCode] = useState<string | null>(null)
   const [providerSaved, setProviderSaved] = useState(false)
   const [soulContent, setSoulContent] = useState('')
+  const oauthOutputRef = useRef<HTMLPreElement | null>(null)
+  const oauthStickToBottomRef = useRef(true)
+  const [showOauthJump, setShowOauthJump] = useState(false)
+
+  const syncOauthScrollState = useCallback(() => {
+    const el = oauthOutputRef.current
+    if (!el) return
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    const atBottom = distanceFromBottom < 12
+    oauthStickToBottomRef.current = atBottom
+    setShowOauthJump(!atBottom)
+  }, [])
+
+  useEffect(() => {
+    const el = oauthOutputRef.current
+    if (!el || !oauthOutput) return
+    if (oauthStickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight
+      setShowOauthJump(false)
+      return
+    }
+    syncOauthScrollState()
+  }, [oauthOutput, syncOauthScrollState])
+
+  const resetOAuthState = useCallback(() => {
+    setOauthBusy(false)
+    setOauthOutput(null)
+    setOauthError(null)
+    setOauthUrl(null)
+    setOauthCode(null)
+    oauthStickToBottomRef.current = true
+    setShowOauthJump(false)
+  }, [])
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -227,6 +266,20 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
   }, [step])
 
   useEffect(() => { fetchStatus() }, [fetchStatus])
+
+  useEffect(() => {
+    if (providerType !== 'openai' && authMethod !== 'api_key') {
+      setAuthMethod('api_key')
+    }
+  }, [providerType, authMethod])
+
+  useEffect(() => {
+    if (step !== 'provider') resetOAuthState()
+  }, [step, resetOAuthState])
+
+  useEffect(() => {
+    if (authMethod !== 'device_code') resetOAuthState()
+  }, [authMethod, resetOAuthState])
 
   const installHook = useCallback(async () => {
     setRunning(true)
@@ -343,7 +396,7 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
           {(() => {
             const PROVIDERS = [
               { id: 'anthropic', label: 'Anthropic', hint: 'Claude', env: 'ANTHROPIC_API_KEY', hermesProvider: 'anthropic', models: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5', 'claude-sonnet-4-5'] },
-              { id: 'openai', label: 'OpenAI', hint: 'GPT / o-series / Codex', env: 'OPENAI_API_KEY', hermesProvider: 'openai-codex', models: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'o3', 'o4-mini', 'codex-mini-latest', 'gpt-5.3-codex'] },
+              { id: 'openai', label: 'OpenAI', hint: 'GPT / o-series / Codex', env: 'OPENAI_API_KEY', hermesProvider: 'openai-codex', oauthHermesProvider: 'openai-codex', supportsDeviceCode: true, models: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'o3', 'o4-mini', 'codex-mini-latest', 'gpt-5.3-codex'] },
               { id: 'openrouter', label: 'OpenRouter', hint: '200+ models', env: 'OPENROUTER_API_KEY', hermesProvider: 'openrouter', models: ['anthropic/claude-sonnet-4-6', 'openai/gpt-4.1', 'google/gemini-2.5-pro', 'meta-llama/llama-4-maverick', 'deepseek/deepseek-r1'] },
               { id: 'google', label: 'Google AI', hint: 'Gemini', env: 'GOOGLE_API_KEY', hermesProvider: 'google', models: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash'] },
               { id: 'nous', label: 'Nous Portal', hint: 'Free tier', env: 'NOUS_API_KEY', hermesProvider: 'nous', models: ['hermes-3-llama-3.1-70b', 'hermes-3-llama-3.1-8b', 'deephermes-3-llama-3.3-70b'] },
@@ -351,7 +404,11 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
             ] as const
             const currentProvider = PROVIDERS.find(p => p.id === providerType)
             const providerModels = currentProvider?.models || []
-            const hermesProviderName = currentProvider?.hermesProvider || 'anthropic'
+            const supportsDeviceCode = Boolean(currentProvider && 'supportsDeviceCode' in currentProvider && currentProvider.supportsDeviceCode)
+            const usesDeviceCode = supportsDeviceCode && authMethod === 'device_code'
+            const hermesProviderName = (usesDeviceCode
+              ? (currentProvider && 'oauthHermesProvider' in currentProvider ? currentProvider.oauthHermesProvider : currentProvider?.hermesProvider)
+              : currentProvider?.hermesProvider) || 'anthropic'
 
             return (<>
           {/* Provider cards */}
@@ -360,8 +417,15 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
               <button
                 key={p.id}
                 type="button"
-                onClick={() => { setProviderType(p.id); setSelectedModel(p.models[0] || ''); setCustomModel('') }}
-                className={`px-2.5 py-2 rounded-lg border text-left text-xs transition-colors ${
+                onClick={() => {
+                  setProviderType(p.id)
+                  setSelectedModel(p.models[0] || '')
+                  setCustomModel('')
+                  const nextSupportsDeviceCode = Boolean('supportsDeviceCode' in p && p.supportsDeviceCode)
+                  setAuthMethod(nextSupportsDeviceCode ? 'device_code' : 'api_key')
+                  resetOAuthState()
+                }}
+                className={`px-3 py-2.5 rounded-lg border text-left text-sm min-h-11 transition-colors ${
                   providerType === p.id
                     ? 'border-primary/40 bg-primary/5 text-foreground'
                     : 'border-border/20 bg-secondary/10 text-muted-foreground hover:border-border/40'
@@ -407,26 +471,151 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
             <CopyableCommand command={`hermes config set model.default ${customModel || selectedModel}`} label="Model" runnable />
           </div>
 
-          {/* API Key */}
-          <div>
-            <label className="text-[10px] text-muted-foreground/50 uppercase tracking-wider block mb-1">
-              {currentProvider?.label} API Key
-            </label>
-            <input
-              type="password"
-              value={providerKey}
-              onChange={(e) => setProviderKey(e.target.value)}
-              placeholder={`sk-...`}
-              className="w-full h-7 rounded border border-border/30 bg-surface-1 px-2 text-xs text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:ring-1 focus:ring-primary/30 font-mono"
-            />
-            <p className="text-[10px] text-muted-foreground/30 mt-0.5">
-              Saved to ~/.hermes/.env
-            </p>
-          </div>
+          {/* Authorization method */}
+          {supportsDeviceCode && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                aria-label="Use device code authentication"
+                onClick={() => {
+                  setAuthMethod('device_code')
+                  resetOAuthState()
+                }}
+                className={`h-7 rounded border text-[10px] transition-colors ${
+                  authMethod === 'device_code'
+                    ? 'border-primary/40 bg-primary/15 text-primary'
+                    : 'border-border/20 bg-card text-muted-foreground hover:border-primary/20'
+                }`}
+              >
+                Device code (headless)
+              </button>
+              <button
+                type="button"
+                aria-label="Use API key authentication"
+                onClick={() => {
+                  setAuthMethod('api_key')
+                  resetOAuthState()
+                }}
+                className={`h-7 rounded border text-[10px] transition-colors ${
+                  authMethod === 'api_key'
+                    ? 'border-primary/40 bg-primary/15 text-primary'
+                    : 'border-border/20 bg-card text-muted-foreground hover:border-primary/20'
+                }`}
+              >
+                API key
+              </button>
+            </div>
+          )}
+
+          {usesDeviceCode ? (
+            <div className="p-2.5 rounded-lg border border-border/15 bg-secondary/5 text-xs space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] text-muted-foreground/50 uppercase tracking-wider">Device authentication</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-label="Start Hermes device code authentication"
+                  className="h-6 px-2 text-[10px]"
+                  disabled={oauthBusy}
+                  onClick={async () => {
+                    setOauthBusy(true)
+                    setOauthOutput(null)
+                    setOauthError(null)
+                    setOauthUrl(null)
+                    setOauthCode(null)
+                    try {
+                      const providerForOAuth = (currentProvider && 'oauthHermesProvider' in currentProvider ? currentProvider.oauthHermesProvider : currentProvider?.hermesProvider) || providerType
+                      const res = await fetch('/api/hermes', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'run-oauth-model', provider: providerForOAuth, model: customModel || selectedModel, authMethod: 'device_code' }),
+                      })
+                      const data = await res.json().catch(() => ({}))
+                      if (typeof data.deviceUrl === 'string' && data.deviceUrl) setOauthUrl(data.deviceUrl)
+                      if (typeof data.userCode === 'string' && data.userCode) setOauthCode(data.userCode)
+                      if (res.ok && data.success) {
+                        setOauthOutput(data.output || 'Authentication complete. You can continue.')
+                      } else {
+                        setOauthError(data.error || 'OAuth command failed')
+                        if (data.output) setOauthOutput(data.output)
+                      }
+                    } catch (err) {
+                      setOauthError(err instanceof Error ? err.message : 'OAuth command failed')
+                    } finally {
+                      setOauthBusy(false)
+                    }
+                  }}
+                >
+                  {oauthBusy ? 'Waiting...' : 'Start auth'}
+                </Button>
+              </div>
+              <p className="text-[10px] text-muted-foreground/40">No API key needed. Start auth, open the link, paste the code, then return here while terminal waits for completion.</p>
+              {oauthUrl && (
+                <a
+                  href={oauthUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex text-[10px] text-primary/90 underline underline-offset-2 hover:text-primary"
+                >
+                  Open device login link
+                </a>
+              )}
+              {oauthCode && (
+                <div className="bg-black/20 rounded px-2 py-1.5">
+                  <p className="text-[10px] text-muted-foreground/60 mb-1">Device code</p>
+                  <code className="text-[10px] text-foreground font-mono tracking-wide">{oauthCode}</code>
+                </div>
+              )}
+              {oauthBusy && <p className="text-[10px] text-primary/80">Waiting for authentication confirmation...</p>}
+              {oauthOutput && (
+                <div className="relative">
+                  <pre
+                    ref={oauthOutputRef}
+                    onScroll={syncOauthScrollState}
+                    className="max-h-24 overflow-y-auto rounded border border-border/20 bg-black/25 px-2.5 py-1.5 text-[10px] text-muted-foreground/80 whitespace-pre-wrap break-all"
+                    aria-label="OAuth terminal output"
+                  >
+                    {oauthOutput}
+                  </pre>
+                  {showOauthJump && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!oauthOutputRef.current) return
+                        oauthOutputRef.current.scrollTop = oauthOutputRef.current.scrollHeight
+                        oauthStickToBottomRef.current = true
+                        setShowOauthJump(false)
+                      }}
+                      className="absolute bottom-1.5 right-1.5 rounded border border-primary/30 bg-background/90 px-2 py-0.5 text-[10px] text-primary hover:bg-background"
+                    >
+                      Jump to latest
+                    </button>
+                  )}
+                </div>
+              )}
+              {oauthError && <p className="text-[10px] text-red-400">{oauthError}</p>}
+            </div>
+          ) : (
+            <div>
+              <label className="text-[10px] text-muted-foreground/50 uppercase tracking-wider block mb-1">
+                {currentProvider?.label} API Key
+              </label>
+              <input
+                type="password"
+                value={providerKey}
+                onChange={(e) => setProviderKey(e.target.value)}
+                placeholder={`sk-...`}
+                className="w-full h-9 rounded border border-border/30 bg-surface-1 px-2.5 text-xs text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:ring-1 focus:ring-primary/30 font-mono"
+              />
+              <p className="text-[10px] text-muted-foreground/30 mt-0.5">
+                Saved to ~/.hermes/.env
+              </p>
+            </div>
+          )}
           </>)
           })()}
 
-          {providerSaved && (
+          {providerSaved && authMethod !== 'device_code' && (
             <div className="p-2.5 rounded-lg border border-green-500/20 bg-green-500/5 text-xs text-green-400">
               Provider key saved successfully.
             </div>
@@ -447,12 +636,12 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
                   const envMap: Record<string, string> = {
                     anthropic: 'ANTHROPIC_API_KEY',
                     openai: 'OPENAI_API_KEY',
-                    openai_oauth: 'OPENAI_API_KEY',
                     openrouter: 'OPENROUTER_API_KEY',
                     nous: 'NOUS_API_KEY',
                     google: 'GOOGLE_API_KEY',
+                    xai: 'XAI_API_KEY',
                   }
-                  if (providerKey.trim()) {
+                  if (authMethod !== 'device_code' && providerKey.trim()) {
                     const res = await fetch('/api/hermes', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
@@ -473,7 +662,7 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
                 }
               }}
             >
-              {running ? 'Saving...' : providerKey.trim() ? 'Save & Continue' : 'Continue'}
+              {running ? 'Saving...' : (authMethod !== 'device_code' && providerKey.trim()) ? 'Save & Continue' : 'Continue'}
             </Button>
           </div>
         </div>
@@ -536,7 +725,7 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
             <StatusCard label="Gateway" ok={hermesStatus?.gatewayRunning} subtitle={hermesStatus?.gatewayRunning ? 'Running' : 'Not started'} />
             <StatusCard label="Sessions" value={hermesStatus?.activeSessions || 0} ok={true} />
           </div>
@@ -613,11 +802,36 @@ function CopyableCommand({ command, label, runnable = false, onOutput }: {
   const [running, setRunning] = useState(false)
   const [output, setOutput] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const outputRef = useRef<HTMLDivElement | null>(null)
+  const outputStickToBottomRef = useRef(true)
+  const [showOutputJump, setShowOutputJump] = useState(false)
+
+  const syncOutputScrollState = useCallback(() => {
+    const el = outputRef.current
+    if (!el) return
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    const atBottom = distanceFromBottom < 12
+    outputStickToBottomRef.current = atBottom
+    setShowOutputJump(!atBottom)
+  }, [])
+
+  useEffect(() => {
+    const el = outputRef.current
+    if (!el || !output) return
+    if (outputStickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight
+      setShowOutputJump(false)
+      return
+    }
+    syncOutputScrollState()
+  }, [output, syncOutputScrollState])
 
   const handleRun = async () => {
     setRunning(true)
     setOutput(null)
     setError(null)
+    outputStickToBottomRef.current = true
+    setShowOutputJump(false)
     try {
       const res = await fetch('/api/hermes', {
         method: 'POST',
@@ -674,8 +888,29 @@ function CopyableCommand({ command, label, runnable = false, onOutput }: {
         <span className="text-[10px] text-muted-foreground/50 w-32 shrink-0">{label}</span>
       </div>
       {output && (
-        <div className="bg-black/30 rounded px-2 py-1.5 max-h-16 overflow-y-auto ml-0">
-          <pre className="font-mono text-[10px] text-muted-foreground/60 whitespace-pre-wrap break-all">{output}</pre>
+        <div className="relative">
+          <div
+            ref={outputRef}
+            onScroll={syncOutputScrollState}
+            className="max-h-16 overflow-y-auto rounded border border-border/20 bg-black/30 px-2 py-1.5 ml-0"
+            aria-label={`${label} command output`}
+          >
+            <pre className="font-mono text-[10px] text-muted-foreground/70 whitespace-pre-wrap break-all">{output}</pre>
+          </div>
+          {showOutputJump && (
+            <button
+              type="button"
+              onClick={() => {
+                if (!outputRef.current) return
+                outputRef.current.scrollTop = outputRef.current.scrollHeight
+                outputStickToBottomRef.current = true
+                setShowOutputJump(false)
+              }}
+              className="absolute bottom-1.5 right-1.5 rounded border border-primary/30 bg-background/90 px-2 py-0.5 text-[10px] text-primary hover:bg-background"
+            >
+              Jump to latest
+            </button>
+          )}
         </div>
       )}
       {error && <p className="text-[10px] text-red-400 ml-0">{error}</p>}

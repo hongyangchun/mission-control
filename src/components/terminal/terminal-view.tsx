@@ -130,6 +130,7 @@ export function TerminalView({ sessionId, sessionKind, mode, onExit, onError, on
 
       term.open(containerRef.current)
       fitAddon.fit()
+      term.scrollToBottom()
 
       // Step 3: Connect WebSocket
       const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
@@ -152,6 +153,7 @@ export function TerminalView({ sessionId, sessionKind, mode, onExit, onError, on
           switch (msg.type) {
             case 'output':
               term.write(msg.data)
+              term.scrollToBottom()
               break
             case 'ready':
               setConnState('ready')
@@ -170,6 +172,7 @@ export function TerminalView({ sessionId, sessionKind, mode, onExit, onError, on
         } catch {
           // Raw text fallback
           term.write(event.data)
+          term.scrollToBottom()
         }
       }
 

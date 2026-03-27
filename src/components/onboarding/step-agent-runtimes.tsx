@@ -1,19 +1,18 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Loader } from '@/components/ui/loader'
 import { RuntimeSetupModal } from './runtime-setup-modal'
 
 const HERMES_PROVIDERS = [
   { id: 'anthropic', label: 'Anthropic', hermesId: 'anthropic', models: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5'], env: 'ANTHROPIC_API_KEY' },
-  { id: 'openai', label: 'OpenAI (API Key)', hermesId: 'openai-codex', models: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'o3', 'o4-mini', 'codex-mini-latest', 'gpt-5.3-codex'], env: 'OPENAI_API_KEY' },
-  { id: 'openai_oauth', label: 'OpenAI (OAuth)', hermesId: 'openai', models: ['gpt-4.1', 'gpt-4.1-mini', 'o3', 'o4-mini', 'codex-mini-latest', 'gpt-5.3-codex'], env: 'OPENAI_API_KEY' },
+  { id: 'openai', label: 'OpenAI', hermesId: 'openai-codex', oauthHermesId: 'openai-codex', supportsDeviceCode: true, models: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'o3', 'o4-mini', 'codex-mini-latest', 'gpt-5.3-codex'], env: 'OPENAI_API_KEY' },
   { id: 'openrouter', label: 'OpenRouter', hermesId: 'openrouter', models: ['anthropic/claude-sonnet-4-6', 'openai/gpt-4.1'], env: 'OPENROUTER_API_KEY' },
   { id: 'google', label: 'Google AI', hermesId: 'google', models: ['gemini-2.5-pro', 'gemini-2.5-flash'], env: 'GOOGLE_API_KEY' },
   { id: 'nous', label: 'Nous Portal', hermesId: 'nous', models: ['hermes-3-llama-3.1-70b'], env: 'NOUS_API_KEY' },
   { id: 'xai', label: 'xAI', hermesId: 'xai', models: ['grok-3', 'grok-3-mini'], env: 'XAI_API_KEY' },
-]
+] as const
 
 interface RuntimeStatus {
   id: string
@@ -58,14 +57,40 @@ export function StepAgentRuntimes({ isGateway, onNext, onBack }: Props) {
   const [setupCompleted, setSetupCompleted] = useState<Set<string>>(new Set())
   const [hermesProvider, setHermesProvider] = useState('anthropic')
   const [hermesModel, setHermesModel] = useState('claude-sonnet-4-6')
+  const [hermesAuthMethod, setHermesAuthMethod] = useState<'api_key' | 'device_code'>('api_key')
   const [hermesApiKey, setHermesApiKey] = useState('')
   const [hermesConfigSaved, setHermesConfigSaved] = useState(false)
   const [hermesConfigBusy, setHermesConfigBusy] = useState(false)
   const [hermesOAuthBusy, setHermesOAuthBusy] = useState(false)
   const [hermesOAuthOutput, setHermesOAuthOutput] = useState<string | null>(null)
   const [hermesOAuthError, setHermesOAuthError] = useState<string | null>(null)
+  const [hermesOAuthUrl, setHermesOAuthUrl] = useState<string | null>(null)
+  const [hermesOAuthCode, setHermesOAuthCode] = useState<string | null>(null)
   const [hermesMigrating, setHermesMigrating] = useState(false)
   const [hermesMigrateResult, setHermesMigrateResult] = useState<string | null>(null)
+  const hermesOauthLogRef = useRef<HTMLPreElement | null>(null)
+  const hermesOauthStickToBottomRef = useRef(true)
+  const [showHermesOauthJump, setShowHermesOauthJump] = useState(false)
+
+  const syncHermesOauthScrollState = useCallback(() => {
+    const el = hermesOauthLogRef.current
+    if (!el) return
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    const atBottom = distanceFromBottom < 12
+    hermesOauthStickToBottomRef.current = atBottom
+    setShowHermesOauthJump(!atBottom)
+  }, [])
+
+  useEffect(() => {
+    const el = hermesOauthLogRef.current
+    if (!el || !hermesOAuthOutput) return
+    if (hermesOauthStickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight
+      setShowHermesOauthJump(false)
+      return
+    }
+    syncHermesOauthScrollState()
+  }, [hermesOAuthOutput, syncHermesOauthScrollState])
 
   const fetchRuntimes = useCallback(async () => {
     try {
@@ -153,13 +178,17 @@ export function StepAgentRuntimes({ isGateway, onNext, onBack }: Props) {
         <div className="flex-1 flex items-center justify-center">
           <Loader />
         </div>
-        <div className="flex items-center justify-between pt-4 border-t border-border/30">
-          <Button variant="ghost" size="sm" onClick={onBack} className="text-xs text-muted-foreground">Back</Button>
-          <Button onClick={onNext} size="sm" className={`${mc.bgBtn} ${mc.text} border ${mc.border} ${mc.hoverBg}`}>Continue</Button>
+        <div className="sticky bottom-0 z-10 -mx-4 mt-4 flex items-center justify-between border-t border-border/30 bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:static sm:z-auto sm:mx-0 sm:mt-6 sm:bg-transparent sm:px-0 sm:py-4 sm:backdrop-blur-0">
+          <Button variant="ghost" size="sm" onClick={onBack} className="text-sm text-muted-foreground min-h-10 px-4">Back</Button>
+          <Button onClick={onNext} size="sm" className={`${mc.bgBtn} ${mc.text} border ${mc.border} ${mc.hoverBg} min-h-10 px-4`}>Continue</Button>
         </div>
       </>
     )
   }
+
+  const selectedHermesProvider = HERMES_PROVIDERS.find(p => p.id === hermesProvider)
+  const supportsDeviceCode = Boolean(selectedHermesProvider && 'supportsDeviceCode' in selectedHermesProvider && selectedHermesProvider.supportsDeviceCode)
+  const usesDeviceCode = supportsDeviceCode && hermesAuthMethod === 'device_code'
 
   return (
     <>
@@ -170,12 +199,12 @@ export function StepAgentRuntimes({ isGateway, onNext, onBack }: Props) {
         </p>
 
         {isDocker && (
-          <div className="mb-3 p-2.5 rounded-lg border border-void-cyan/20 bg-void-cyan/5 text-xs text-muted-foreground">
+          <div className="mb-3 p-2.5 rounded-lg border border-void-cyan/20 bg-void-cyan/5 text-sm text-muted-foreground">
             Running in Docker — install directly or use sidecar services for production.
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
           {runtimes.map((rt) => {
             const job = activeJobs[rt.id]
             const isInstalling = job?.status === 'running' || job?.status === 'pending'
@@ -222,7 +251,7 @@ export function StepAgentRuntimes({ isGateway, onNext, onBack }: Props) {
                           </div>
                         </div>
                         <div>
-                          <p className="text-xs font-medium text-foreground">{rt.name}</p>
+                          <p className="text-sm font-medium text-foreground">{rt.name}</p>
                           <p className="text-2xs text-emerald-400/70">Installing...</p>
                         </div>
                       </div>
@@ -240,7 +269,7 @@ export function StepAgentRuntimes({ isGateway, onNext, onBack }: Props) {
                       <p className={`text-sm font-medium mb-1 ${rt.installed || justInstalled ? 'text-emerald-400' : 'text-foreground'}`}>
                         {rt.name}
                       </p>
-                      <p className="text-xs text-muted-foreground mb-2">{rt.description}</p>
+                      <p className="text-sm text-muted-foreground mb-2 leading-relaxed">{rt.description}</p>
 
                       {rt.version && (
                         <p className="text-2xs text-muted-foreground/60 mb-1">v{rt.version}</p>
@@ -259,16 +288,21 @@ export function StepAgentRuntimes({ isGateway, onNext, onBack }: Props) {
                           <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">Quick Setup</p>
 
                           {/* Provider + Model dropdowns */}
-                          <div className="grid grid-cols-2 gap-1.5">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                             <select
                               value={hermesProvider}
                               onChange={(e) => {
                                 const p = HERMES_PROVIDERS.find(pr => pr.id === e.target.value)
                                 setHermesProvider(e.target.value)
                                 setHermesModel(p?.models[0] || '')
+                                const nextSupportsDeviceCode = Boolean(p && 'supportsDeviceCode' in p && p.supportsDeviceCode)
+                                setHermesAuthMethod(nextSupportsDeviceCode ? 'device_code' : 'api_key')
                                 setHermesOAuthOutput(null)
                                 setHermesOAuthError(null)
+                                setHermesOAuthUrl(null)
+                                setHermesOAuthCode(null)
                               }}
+                              aria-label="Select Hermes provider"
                               className="h-7 rounded border border-border/20 bg-card px-1.5 text-[10px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
                             >
                               {HERMES_PROVIDERS.map((p) => (
@@ -278,6 +312,7 @@ export function StepAgentRuntimes({ isGateway, onNext, onBack }: Props) {
                             <select
                               value={hermesModel}
                               onChange={(e) => setHermesModel(e.target.value)}
+                              aria-label="Select Hermes model"
                               className="h-7 rounded border border-border/20 bg-card px-1.5 text-[10px] text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-primary/30"
                             >
                               {(HERMES_PROVIDERS.find(p => p.id === hermesProvider)?.models || []).map((m) => (
@@ -286,29 +321,70 @@ export function StepAgentRuntimes({ isGateway, onNext, onBack }: Props) {
                             </select>
                           </div>
 
+                          {/* Authorization method */}
+                          {supportsDeviceCode && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                              <button
+                                type="button"
+                                aria-label="Use device code authentication"
+                                onClick={() => setHermesAuthMethod('device_code')}
+                                className={`h-7 rounded border text-[10px] transition-colors ${
+                                  hermesAuthMethod === 'device_code'
+                                    ? 'border-primary/40 bg-primary/15 text-primary'
+                                    : 'border-border/20 bg-card text-muted-foreground hover:border-primary/20'
+                                }`}
+                              >
+                                Device code (headless)
+                              </button>
+                              <button
+                                type="button"
+                                aria-label="Use API key authentication"
+                                onClick={() => setHermesAuthMethod('api_key')}
+                                className={`h-7 rounded border text-[10px] transition-colors ${
+                                  hermesAuthMethod === 'api_key'
+                                    ? 'border-primary/40 bg-primary/15 text-primary'
+                                    : 'border-border/20 bg-card text-muted-foreground hover:border-primary/20'
+                                }`}
+                              >
+                                API key
+                              </button>
+                            </div>
+                          )}
+
                           {/* API Key or OAuth */}
-                          {hermesProvider === 'openai_oauth' ? (
+                          {usesDeviceCode ? (
                             <div className="p-2 rounded border border-border/15 bg-black/10 text-[10px] text-muted-foreground/60 space-y-1.5">
                               <p>OAuth uses device code flow:</p>
                               <div className="flex items-center gap-1.5 bg-black/20 rounded px-2 py-1 font-mono text-[10px]">
                                 <span className="text-muted-foreground/50">$</span>
-                                <span className="flex-1 text-foreground/80">hermes model</span>
+                                <span className="flex-1 text-foreground/80">hermes login</span>
                                 <button
                                   type="button"
+                                  aria-label="Start Hermes device code authentication"
                                   disabled={hermesOAuthBusy}
                                   onClick={async () => {
                                     setHermesOAuthBusy(true)
                                     setHermesOAuthOutput(null)
                                     setHermesOAuthError(null)
+                                    setHermesOAuthUrl(null)
+                                    setHermesOAuthCode(null)
                                     try {
+                                      const hp = HERMES_PROVIDERS.find(p => p.id === hermesProvider)
                                       const res = await fetch('/api/hermes', {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ action: 'run-oauth-model', model: hermesModel }),
+                                        body: JSON.stringify({
+                                          action: 'run-oauth-model',
+                                          model: hermesModel,
+                                          provider: (hp && 'oauthHermesId' in hp ? hp.oauthHermesId : hp?.hermesId) || hermesProvider,
+                                          authMethod: 'device_code',
+                                        }),
                                       })
                                       const data = await res.json()
+                                      if (typeof data.deviceUrl === 'string' && data.deviceUrl) setHermesOAuthUrl(data.deviceUrl)
+                                      if (typeof data.userCode === 'string' && data.userCode) setHermesOAuthCode(data.userCode)
                                       if (res.ok && data.success) {
-                                        setHermesOAuthOutput(data.output || 'Done')
+                                        setHermesOAuthOutput(data.output || 'Authentication complete. You can continue.')
                                       } else {
                                         setHermesOAuthError(data.error || 'OAuth command failed')
                                         if (data.output) setHermesOAuthOutput(data.output)
@@ -321,28 +397,55 @@ export function StepAgentRuntimes({ isGateway, onNext, onBack }: Props) {
                                   }}
                                   className="text-[9px] px-1.5 py-0.5 rounded bg-primary/20 text-primary hover:bg-primary/30 transition-colors disabled:opacity-50"
                                 >
-                                  {hermesOAuthBusy ? 'Running...' : 'Run'}
+                                  {hermesOAuthBusy ? 'Waiting...' : 'Start auth'}
                                 </button>
                               </div>
-                              <p className="text-[9px] text-muted-foreground/30">Shows the device-code login link/code output. No API key needed.</p>
-                              {hermesOAuthOutput && (() => {
-                                const loginUrl = hermesOAuthOutput.match(/https?:\/\/[^\s]+/)?.[0]
-                                return (
-                                  <div className="space-y-1">
-                                    {loginUrl && (
-                                      <a
-                                        href={loginUrl}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="inline-flex text-[9px] text-primary/90 underline underline-offset-2 hover:text-primary"
-                                      >
-                                        Open device login link
-                                      </a>
-                                    )}
-                                    <pre className="max-h-24 overflow-y-auto bg-black/20 rounded px-2 py-1 text-[9px] text-muted-foreground/70 whitespace-pre-wrap break-all">{hermesOAuthOutput}</pre>
-                                  </div>
-                                )
-                              })()}
+                              <p className="text-[10px] text-muted-foreground/50 leading-relaxed">No API key needed. Start auth, open the link, paste the code, then return here while terminal waits for completion.</p>
+                              {hermesOAuthUrl && (
+                                <a
+                                  href={hermesOAuthUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex text-[9px] text-primary/90 underline underline-offset-2 hover:text-primary"
+                                >
+                                  Open device login link
+                                </a>
+                              )}
+                              {hermesOAuthCode && (
+                                <div className="bg-black/20 rounded px-2 py-1.5">
+                                  <p className="text-[9px] text-muted-foreground/50 mb-1">Device code</p>
+                                  <code className="text-[10px] text-foreground font-mono tracking-wide">{hermesOAuthCode}</code>
+                                </div>
+                              )}
+                              {hermesOAuthBusy && (
+                                <p className="text-[9px] text-primary/80">Waiting for authentication confirmation...</p>
+                              )}
+                              {hermesOAuthOutput && (
+                                <div className="relative">
+                                  <pre
+                                    ref={hermesOauthLogRef}
+                                    onScroll={syncHermesOauthScrollState}
+                                    className="max-h-24 overflow-y-auto rounded border border-border/20 bg-black/25 px-2.5 py-1.5 text-[10px] text-muted-foreground/80 whitespace-pre-wrap break-all"
+                                    aria-label="Hermes OAuth terminal output"
+                                  >
+                                    {hermesOAuthOutput}
+                                  </pre>
+                                  {showHermesOauthJump && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (!hermesOauthLogRef.current) return
+                                        hermesOauthLogRef.current.scrollTop = hermesOauthLogRef.current.scrollHeight
+                                        hermesOauthStickToBottomRef.current = true
+                                        setShowHermesOauthJump(false)
+                                      }}
+                                      className="absolute bottom-1.5 right-1.5 rounded border border-primary/30 bg-background/90 px-2 py-0.5 text-[10px] text-primary hover:bg-background"
+                                    >
+                                      Jump to latest
+                                    </button>
+                                  )}
+                                </div>
+                              )}
                               {hermesOAuthError && <p className="text-[9px] text-red-400">{hermesOAuthError}</p>}
                             </div>
                           ) : (
@@ -363,11 +466,14 @@ export function StepAgentRuntimes({ isGateway, onNext, onBack }: Props) {
                               setHermesConfigBusy(true)
                               try {
                                 const hp = HERMES_PROVIDERS.find(p => p.id === hermesProvider)
+                                const providerForConfig = usesDeviceCode
+                                  ? (hp && 'oauthHermesId' in hp ? hp.oauthHermesId : hp?.hermesId) || hermesProvider
+                                  : hp?.hermesId || hermesProvider
                                 // Set provider + model
-                                await fetch('/api/hermes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'run-command', command: `hermes config set model.provider ${hp?.hermesId || hermesProvider}` }) })
+                                await fetch('/api/hermes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'run-command', command: `hermes config set model.provider ${providerForConfig}` }) })
                                 await fetch('/api/hermes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'run-command', command: `hermes config set model.default ${hermesModel}` }) })
-                                // Save API key if provided
-                                if (hermesApiKey.trim() && hp?.env) {
+                                // Save API key if provided and auth method requires it
+                                if (!usesDeviceCode && hermesApiKey.trim() && hp?.env) {
                                   await fetch('/api/hermes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'set-env', key: hp.env, value: hermesApiKey }) })
                                 }
                                 setHermesConfigSaved(true)
@@ -453,9 +559,9 @@ export function StepAgentRuntimes({ isGateway, onNext, onBack }: Props) {
         </div>
       </div>
 
-      <div className="flex items-center justify-between pt-4 border-t border-border/30">
-        <Button variant="ghost" size="sm" onClick={onBack} className="text-xs text-muted-foreground">Back</Button>
-        <Button onClick={onNext} size="sm" className={`${mc.bgBtn} ${mc.text} border ${mc.border} ${mc.hoverBg}`}>
+      <div className="sticky bottom-0 z-10 -mx-4 mt-4 flex items-center justify-between border-t border-border/30 bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:static sm:z-auto sm:mx-0 sm:mt-6 sm:bg-transparent sm:px-0 sm:py-4 sm:backdrop-blur-0">
+        <Button variant="ghost" size="sm" onClick={onBack} className="text-sm text-muted-foreground min-h-10 px-4">Back</Button>
+        <Button onClick={onNext} size="sm" className={`${mc.bgBtn} ${mc.text} border ${mc.border} ${mc.hoverBg} min-h-10 px-4`}>
           Continue
         </Button>
       </div>
